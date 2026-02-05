@@ -83,6 +83,9 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
   /// Tracks if an error occurred (e.g., division by zero)
   bool _hasError = false;
 
+  /// Full raw input as user types (e.g. "6000/2+3227*2")
+  String _rawExpression = '0';
+
   // --- Digit button handler ---
   /// Appends a digit to the display. Handles leading zeros and decimal input.
   void _onDigitPressed(String digit) {
@@ -90,15 +93,20 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
 
     setState(() {
       if (_isSecondNumber) {
-        // Starting fresh second number entry
         _display = digit == '0' ? '0' : digit;
         _isSecondNumber = false;
+        if (_result.isNotEmpty && _rawExpression == _result) {
+          _rawExpression = digit;
+        } else {
+          _rawExpression += digit;
+        }
       } else {
-        // Append to current number (avoid multiple leading zeros)
         if (_display == '0' && digit != '.') {
           _display = digit;
+          _rawExpression = digit;
         } else {
           _display += digit;
+          _rawExpression += digit;
         }
       }
       _result = '';
@@ -114,8 +122,17 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
       if (_isSecondNumber) {
         _display = '0.';
         _isSecondNumber = false;
+        _rawExpression += '0.';
       } else if (!_display.contains('.')) {
         _display += '.';
+        if (_rawExpression == '0') {
+          _rawExpression = '0.';
+        } else if (_rawExpression.isNotEmpty &&
+            ['+', '-', '*', '/', '%'].contains(_rawExpression[_rawExpression.length - 1])) {
+          _rawExpression += '0.';
+        } else {
+          _rawExpression += '.';
+        }
       }
       _result = '';
     });
@@ -132,10 +149,10 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
       final currentValue = double.tryParse(_display) ?? 0;
 
       if (_operator == null) {
-        // No previous operator - store first number and operator
         _firstNumber = currentValue;
         _operator = operatorSymbol;
         _isSecondNumber = true;
+        _rawExpression += operatorSymbol;
       } else {
         // Operator already set - perform pending calculation, then set new operator
         final prevOperator = _operator!;
@@ -169,6 +186,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
         }
         _operator = operatorSymbol;
         _isSecondNumber = true;
+        _rawExpression += operatorSymbol;
       }
       _result = '';
     });
@@ -243,11 +261,10 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
 
       if (calculatedResult != null) {
         _result = _formatResult(calculatedResult);
-
-        // Result becomes new first number for chained calculations
         _firstNumber = calculatedResult;
         _display = _result;
         _isSecondNumber = true;
+        _rawExpression = _result;
       }
     });
   }
@@ -262,6 +279,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
       _operator = null;
       _isSecondNumber = false;
       _hasError = false;
+      _rawExpression = '0';
     });
   }
 
@@ -271,10 +289,29 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
     if (_hasError) return;
 
     setState(() {
-      if (_display.length > 1) {
-        _display = _display.substring(0, _display.length - 1);
+      if (_rawExpression.length > 1) {
+        _rawExpression = _rawExpression.substring(0, _rawExpression.length - 1);
+        final lastOp = _rawExpression.lastIndexOf(RegExp(r'[+\-*/%]'));
+        if (lastOp >= 0) {
+          final afterOp = _rawExpression.substring(lastOp + 1);
+          _display = afterOp.isEmpty ? '0' : afterOp;
+          final beforeOp = _rawExpression.substring(0, lastOp);
+          if (!RegExp(r'[+\-*/%]').hasMatch(beforeOp)) {
+            _firstNumber = double.tryParse(beforeOp);
+            _operator = _rawExpression[lastOp];
+          }
+        } else {
+          _display = _rawExpression;
+          _firstNumber = null;
+          _operator = null;
+          _isSecondNumber = false;
+        }
       } else {
+        _rawExpression = '0';
         _display = '0';
+        _firstNumber = null;
+        _operator = null;
+        _isSecondNumber = false;
       }
       _result = '';
     });
@@ -314,6 +351,35 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
     );
   }
 
+  /// Input line with syntax highlight: operators blue, digits gray
+  Widget _buildInputWithHighlight(Color inputColor, Color operatorColor) {
+    const style = TextStyle(
+      fontSize: 26,
+      fontWeight: FontWeight.w400,
+    );
+    final spans = <TextSpan>[];
+    final text = _rawExpression.isEmpty ? '0' : _rawExpression;
+    for (int i = 0; i < text.length; i++) {
+      final char = text[i];
+      final isOperator = ['+', '-', '*', '/', '%'].contains(char);
+      spans.add(TextSpan(
+        text: char,
+        style: style.copyWith(
+          color: isOperator ? operatorColor : inputColor,
+        ),
+      ));
+    }
+    if (spans.isEmpty) {
+      spans.add(TextSpan(text: '0', style: style.copyWith(color: inputColor)));
+    }
+    return RichText(
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      textAlign: TextAlign.end,
+      text: TextSpan(children: spans, style: style.copyWith(color: inputColor)),
+    );
+  }
+
   /// Display panel - theme-aware input and result lines
   Widget _buildDisplay() {
     final inputColor =
@@ -341,18 +407,8 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
             mainAxisAlignment: MainAxisAlignment.end,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Input/expression line
-              Text(
-                _display,
-                style: TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.w400,
-                  color: inputColor,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.end,
-              ),
+              // Input/expression line - operators blue, digits light gray
+              _buildInputWithHighlight(inputColor, iconColor),
               const SizedBox(height: 8),
               // Result line - = prefix
               Text(
